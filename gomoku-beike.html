@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>五子棋 · 贝克</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0e0e10;
+    color: #c8cdd4;
+    font-family: 'Noto Sans SC', 'PingFang SC', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 32px 16px 48px;
+  }
+
+  .title {
+    font-size: 12px;
+    letter-spacing: 6px;
+    color: #3a4050;
+    margin-bottom: 24px;
+    font-weight: 300;
+  }
+
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 20px;
+    font-size: 13px;
+    letter-spacing: 2px;
+    color: #4a5260;
+    height: 32px;
+  }
+
+  .turn-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .stone-preview {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+  }
+
+  .stone-black { background: radial-gradient(circle at 35% 35%, #888, #111); }
+  .stone-white { background: radial-gradient(circle at 35% 35%, #fff, #aaa); }
+
+  .status-text {
+    color: #6f7a86;
+    font-size: 13px;
+  }
+
+  .board-wrap {
+    position: relative;
+    background: #1a1208;
+    border: 1px solid #2a2010;
+    border-radius: 4px;
+    padding: 28px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+  }
+
+  canvas {
+    display: block;
+    cursor: pointer;
+  }
+
+  .controls {
+    display: flex;
+    gap: 12px;
+    margin-top: 20px;
+  }
+
+  .btn {
+    background: transparent;
+    border: 1px solid #2a2f3a;
+    color: #4a5260;
+    font-size: 11px;
+    letter-spacing: 3px;
+    padding: 8px 20px;
+    cursor: pointer;
+    transition: all 0.25s;
+    font-family: inherit;
+  }
+
+  .btn:hover {
+    border-color: #4a5260;
+    color: #8a95a3;
+  }
+
+  .players {
+    display: flex;
+    gap: 40px;
+    margin-bottom: 20px;
+    font-size: 11px;
+    letter-spacing: 2px;
+  }
+
+  .player {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #3a4050;
+    transition: color 0.3s;
+  }
+
+  .player.active { color: #8a95a3; }
+
+  .win-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(14,14,16,0.85);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s;
+  }
+
+  .win-overlay.show {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  .win-text {
+    font-size: 18px;
+    letter-spacing: 4px;
+    color: #c8cdd4;
+    margin-bottom: 8px;
+  }
+
+  .win-sub {
+    font-size: 11px;
+    letter-spacing: 3px;
+    color: #4a5260;
+    margin-bottom: 24px;
+  }
+
+  .win-btn {
+    background: transparent;
+    border: 1px solid #3a4050;
+    color: #6f7a86;
+    font-size: 11px;
+    letter-spacing: 3px;
+    padding: 8px 24px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.25s;
+  }
+
+  .win-btn:hover { border-color: #6f7a86; color: #c8cdd4; }
+</style>
+</head>
+<body>
+
+<div class="title">五 子 棋 · 贝 克</div>
+
+<div class="players">
+  <div class="player" id="player-black">
+    <div class="stone-preview stone-black"></div>
+    <span>贝贝 · 黑</span>
+  </div>
+  <div class="player" id="player-white">
+    <div class="stone-preview stone-white"></div>
+    <span>克 · 白</span>
+  </div>
+</div>
+
+<div class="status-bar">
+  <div class="turn-indicator">
+    <div class="stone-preview" id="turn-stone"></div>
+    <span class="status-text" id="status-text">贝贝先走</span>
+  </div>
+</div>
+
+<div class="board-wrap">
+  <canvas id="board" width="420" height="420"></canvas>
+  <div class="win-overlay" id="win-overlay">
+    <div class="win-text" id="win-text"></div>
+    <div class="win-sub" id="win-sub"></div>
+    <button class="win-btn" onclick="resetGame()">再来一局</button>
+  </div>
+</div>
+
+<div class="controls">
+  <button class="btn" onclick="resetGame()">重 开</button>
+  <button class="btn" onclick="undoMove()">悔 棋</button>
+</div>
+
+<script>
+const BOARD_SIZE = 15;
+const CELL = 28;
+const OFFSET = 14;
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+
+let board = [];
+let currentPlayer = 1; // 1=black(贝贝), 2=white(克)
+let gameOver = false;
+let history = [];
+let thinking = false;
+
+function initBoard() {
+  board = Array.from({length: BOARD_SIZE}, () => Array(BOARD_SIZE).fill(0));
+}
+
+function drawBoard() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // 木纹背景
+  ctx.fillStyle = '#1a1208';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // 网格线
+  ctx.strokeStyle = '#3a2e18';
+  ctx.lineWidth = 0.8;
+  for (let i = 0; i < BOARD_SIZE; i++) {
+    const x = OFFSET + i * CELL;
+    const y = OFFSET + i * CELL;
+    ctx.beginPath();
+    ctx.moveTo(x, OFFSET);
+    ctx.lineTo(x, OFFSET + (BOARD_SIZE-1)*CELL);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(OFFSET, y);
+    ctx.lineTo(OFFSET + (BOARD_SIZE-1)*CELL, y);
+    ctx.stroke();
+  }
+
+  // 星位
+  const stars = [[3,3],[3,11],[7,7],[11,3],[11,11]];
+  ctx.fillStyle = '#3a2e18';
+  stars.forEach(([r,c]) => {
+    ctx.beginPath();
+    ctx.arc(OFFSET + c*CELL, OFFSET + r*CELL, 3, 0, Math.PI*2);
+    ctx.fill();
+  });
+
+  // 棋子
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    for (let c = 0; c < BOARD_SIZE; c++) {
+      if (board[r][c]) drawStone(r, c, board[r][c]);
+    }
+  }
+}
+
+function drawStone(r, c, player, alpha = 1) {
+  const x = OFFSET + c * CELL;
+  const y = OFFSET + r * CELL;
+  const radius = CELL * 0.42;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  const grad = ctx.createRadialGradient(x - radius*0.3, y - radius*0.3, radius*0.1, x, y, radius);
+  if (player === 1) {
+    grad.addColorStop(0, '#777');
+    grad.addColorStop(1, '#111');
+  } else {
+    grad.addColorStop(0, '#ffffff');
+    grad.addColorStop(1, '#aaaaaa');
+  }
+
+  ctx.shadowColor = 'rgba(0,0,0,0.5)';
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetX = 2;
+  ctx.shadowOffsetY = 2;
+
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.restore();
+}
+
+function checkWin(r, c, player) {
+  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
+  for (const [dr, dc] of dirs) {
+    let count = 1;
+    for (let d = 1; d <= 4; d++) {
+      const nr = r + dr*d, nc = c + dc*d;
+      if (nr<0||nr>=BOARD_SIZE||nc<0||nc>=BOARD_SIZE||board[nr][nc]!==player) break;
+      count++;
+    }
+    for (let d = 1; d <= 4; d++) {
+      const nr = r - dr*d, nc = c - dc*d;
+      if (nr<0||nr>=BOARD_SIZE||nc<0||nc>=BOARD_SIZE||board[nr][nc]!==player) break;
+      count++;
+    }
+    if (count >= 5) return true;
+  }
+  return false;
+}
+
+function placeStone(r, c, player) {
+  board[r][c] = player;
+  history.push({r, c, player});
+  drawBoard();
+
+  if (checkWin(r, c, player)) {
+    gameOver = true;
+    const isBeibei = player === 1;
+    document.getElementById('win-text').textContent = isBeibei ? '贝贝赢了' : '克赢了';
+    document.getElementById('win-sub').textContent = isBeibei ? '贝贝厉害' : '让你先悔一步';
+    document.getElementById('win-overlay').classList.add('show');
+    return true;
+  }
+  return false;
+}
+
+function updateStatus() {
+  const stone = document.getElementById('turn-stone');
+  const text = document.getElementById('status-text');
+  const pb = document.getElementById('player-black');
+  const pw = document.getElementById('player-white');
+
+  if (gameOver) return;
+
+  if (thinking) {
+    stone.className = 'stone-preview stone-white';
+    text.textContent = '克在思考…';
+    pb.classList.remove('active');
+    pw.classList.add('active');
+  } else if (currentPlayer === 1) {
+    stone.className = 'stone-preview stone-black';
+    text.textContent = '贝贝落子';
+    pb.classList.add('active');
+    pw.classList.remove('active');
+  } else {
+    stone.className = 'stone-preview stone-white';
+    text.textContent = '克落子';
+    pb.classList.remove('active');
+    pw.classList.add('active');
+  }
+}
+
+// 克的AI——评分函数
+function evaluate(r, c, player) {
+  let score = 0;
+  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
+  const opp = player === 2 ? 1 : 2;
+
+  for (const [dr, dc] of dirs) {
+    let myCount = 1, oppCount = 0;
+    let openEnds = 0;
+
+    for (let d = 1; d <= 4; d++) {
+      const nr = r+dr*d, nc = c+dc*d;
+      if (nr<0||nr>=BOARD_SIZE||nc<0||nc>=BOARD_SIZE) break;
+      if (board[nr][nc] === player) myCount++;
+      else { if (board[nr][nc] === 0) openEnds++; break; }
+    }
+    for (let d = 1; d <= 4; d++) {
+      const nr = r-dr*d, nc = c-dc*d;
+      if (nr<0||nr>=BOARD_SIZE||nc<0||nc>=BOARD_SIZE) break;
+      if (board[nr][nc] === player) myCount++;
+      else { if (board[nr][nc] === 0) openEnds++; break; }
+    }
+
+    if (myCount >= 5) score += 100000;
+    else if (myCount === 4 && openEnds >= 1) score += 10000;
+    else if (myCount === 3 && openEnds === 2) score += 1000;
+    else if (myCount === 3 && openEnds === 1) score += 200;
+    else if (myCount === 2 && openEnds === 2) score += 100;
+    else if (myCount === 2) score += 20;
+  }
+
+  // 防守：检查对手在此落子的威胁
+  for (const [dr, dc] of dirs) {
+    let oppC = 1;
+    let oe = 0;
+    board[r][c] = opp;
+    for (let d = 1; d <= 4; d++) {
+      const nr = r+dr*d, nc = c+dc*d;
+      if (nr<0||nr>=BOARD_SIZE||nc<0||nc>=BOARD_SIZE) break;
+      if (board[nr][nc] === opp) oppC++;
+      else { if (board[nr][nc] === 0) oe++; break; }
+    }
+    for (let d = 1; d <= 4; d++) {
+      const nr = r-dr*d, nc = c-dc*d;
+      if (nr<0||nr>=BOARD_SIZE||nc<0||nc>=BOARD_SIZE) break;
+      if (board[nr][nc] === opp) oppC++;
+      else { if (board[nr][nc] === 0) oe++; break; }
+    }
+    board[r][c] = 0;
+
+    if (oppC >= 5) score += 90000;
+    else if (oppC === 4 && oe >= 1) score += 9000;
+    else if (oppC === 3 && oe === 2) score += 800;
+    else if (oppC === 3 && oe === 1) score += 150;
+    else if (oppC === 2 && oe === 2) score += 80;
+  }
+
+  // 偏向中心
+  const center = (BOARD_SIZE-1)/2;
+  score += (7 - Math.abs(r-center) - Math.abs(c-center)) * 2;
+
+  return score;
+}
+
+function aiMove() {
+  let bestScore = -Infinity;
+  let bestMoves = [];
+
+  for (let r = 0; r < BOARD_SIZE; r++) {
+    for (let c = 0; c < BOARD_SIZE; c++) {
+      if (board[r][c] !== 0) continue;
+      // 只考虑有邻居的位置
+      let hasNeighbor = false;
+      for (let dr = -2; dr <= 2; dr++) {
+        for (let dc = -2; dc <= 2; dc++) {
+          const nr = r+dr, nc = c+dc;
+          if (nr>=0&&nr<BOARD_SIZE&&nc>=0&&nc<BOARD_SIZE&&board[nr][nc]!==0) { hasNeighbor=true; break; }
+        }
+        if (hasNeighbor) break;
+      }
+      if (!hasNeighbor && history.length > 0) continue;
+
+      const s = evaluate(r, c, 2);
+      if (s > bestScore) { bestScore = s; bestMoves = [{r,c}]; }
+      else if (s === bestScore) bestMoves.push({r,c});
+    }
+  }
+
+  if (bestMoves.length === 0) return;
+  const pick = bestMoves[Math.floor(Math.random() * bestMoves.length)];
+
+  thinking = false;
+  updateStatus();
+  const won = placeStone(pick.r, pick.c, 2);
+  if (!won) {
+    currentPlayer = 1;
+    updateStatus();
+  }
+}
+
+canvas.addEventListener('click', (e) => {
+  if (gameOver || currentPlayer !== 1 || thinking) return;
+
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const px = (e.clientX - rect.left) * scaleX;
+  const py = (e.clientY - rect.top) * scaleY;
+
+  const c = Math.round((px - OFFSET) / CELL);
+  const r = Math.round((py - OFFSET) / CELL);
+
+  if (r<0||r>=BOARD_SIZE||c<0||c>=BOARD_SIZE||board[r][c]!==0) return;
+
+  const won = placeStone(r, c, 1);
+  if (!won) {
+    currentPlayer = 2;
+    thinking = true;
+    updateStatus();
+    setTimeout(aiMove, 300 + Math.random()*200);
+  }
+});
+
+// 鼠标悬停预览
+canvas.addEventListener('mousemove', (e) => {
+  if (gameOver || currentPlayer !== 1 || thinking) return;
+  drawBoard();
+
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const px = (e.clientX - rect.left) * scaleX;
+  const py = (e.clientY - rect.top) * scaleY;
+
+  const c = Math.round((px - OFFSET) / CELL);
+  const r = Math.round((py - OFFSET) / CELL);
+
+  if (r>=0&&r<BOARD_SIZE&&c>=0&&c<BOARD_SIZE&&board[r][c]===0) {
+    drawStone(r, c, 1, 0.4);
+  }
+});
+
+canvas.addEventListener('mouseleave', () => { if (!gameOver) drawBoard(); });
+
+function undoMove() {
+  if (thinking || gameOver) return;
+  // 撤销两步（贝贝+克）
+  let steps = history.length >= 2 ? 2 : history.length;
+  for (let i = 0; i < steps; i++) {
+    const last = history.pop();
+    if (last) board[last.r][last.c] = 0;
+  }
+  currentPlayer = 1;
+  gameOver = false;
+  drawBoard();
+  updateStatus();
+}
+
+function resetGame() {
+  initBoard();
+  history = [];
+  currentPlayer = 1;
+  gameOver = false;
+  thinking = false;
+  document.getElementById('win-overlay').classList.remove('show');
+  drawBoard();
+  updateStatus();
+}
+
+// 初始化
+initBoard();
+drawBoard();
+updateStatus();
+document.getElementById('turn-stone').className = 'stone-preview stone-black';
+</script>
+
+</body>
+</html>
